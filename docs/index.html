@@ -1,0 +1,598 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>WiT: Waypoint Diffusion Transformers via Trajectory Conflict Navigation</title>
+    <meta
+      name="description"
+      content="Official project page for WiT, a pixel-space diffusion transformer that mitigates trajectory conflict with semantic waypoints and Just-Pixel AdaLN."
+    >
+    <meta name="theme-color" content="#0d5b55">
+    <meta property="og:title" content="WiT: Waypoint Diffusion Transformers via Trajectory Conflict Navigation">
+    <meta
+      property="og:description"
+      content="WiT routes pixel-space flow matching through semantic waypoints, improving stability, convergence, and sample quality on ImageNet 256x256."
+    >
+    <meta property="og:url" content="https://hainuo-wang.github.io/WiT/">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link
+      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=Source+Serif+4:wght@600;700&display=swap"
+      rel="stylesheet"
+    >
+    <link rel="stylesheet" href="assets/css/site.css">
+  </head>
+  <body>
+    <header class="site-header">
+      <div class="shell">
+        <div class="topbar">
+          <a class="brand" href="#top">WiT</a>
+          <nav class="section-nav" aria-label="Primary">
+            <a href="#abstract">Abstract</a>
+            <a href="#method">Method</a>
+            <a href="#results">Results</a>
+            <a href="#gallery">Gallery</a>
+            <a href="#acknowledgments">Acknowledgments</a>
+            <a href="#citation">Citation</a>
+          </nav>
+        </div>
+
+        <div class="hero" id="top">
+          <div class="hero-copy">
+            <p class="eyebrow">Official Project Page</p>
+            <h1>WiT: Waypoint Diffusion Transformers via Trajectory Conflict Navigation</h1>
+            <p class="hero-summary">
+              WiT mitigates trajectory conflict in pixel-space flow matching by routing the
+              generative path through low-dimensional semantic waypoints and injecting them with
+              Just-Pixel AdaLN.
+            </p>
+
+            <div class="authors">
+              <span>Hainuo Wang*</span>
+              <span>Mingjia Li*</span>
+              <span>Xiaojie Guo&#8224;</span>
+            </div>
+            <p class="affiliation">
+              College of Intelligence and Computing, Tianjin University, Tianjin 300350, China
+            </p>
+            <p class="meta-note">
+              * Equal contribution. &#8224; Corresponding author:
+              <a href="mailto:xj.max.guo@gmail.com">xj.max.guo@gmail.com</a>
+            </p>
+
+            <div class="hero-actions">
+              <a class="button button-primary" id="code-link" href="https://github.com/hainuo-wang/WiT" target="_blank" rel="noreferrer">
+                Code Repository
+              </a>
+              <a class="button button-secondary" id="arxiv-link" href="https://arxiv.org/abs/2603.15132" target="_blank" rel="noreferrer">
+                arXiv
+              </a>
+              <a class="button button-secondary" href="#citation">BibTeX</a>
+            </div>
+            <p class="release-note">
+              The repository is public, but the training and inference code will be open-sourced
+              after the paper is formally published.
+            </p>
+
+            <div class="hero-abstract" id="abstract">
+              <p class="eyebrow">Abstract</p>
+              <div class="hero-abstract-body">
+                <p>
+                  Recent flow matching models avoid VAE reconstruction bottlenecks by operating
+                  directly in pixel space, but the pixel manifold lacks semantic continuity. Optimal
+                  transport paths for different semantic endpoints overlap and intersect, causing severe
+                  trajectory conflict and slow convergence.
+                </p>
+                <p>
+                  WiT introduces discriminative semantic waypoints projected from pretrained vision
+                  models, then factors the transport into two easier mappings: prior-to-waypoint and
+                  waypoint-to-pixel. A lightweight waypoint generator predicts these semantic anchors
+                  from the current noisy state, and the primary diffusion transformer consumes them via
+                  Just-Pixel AdaLN for dense spatial modulation.
+                </p>
+                <p>
+                  On ImageNet 256x256, WiT outperforms strong pixel-space baselines, matches JiT-L/16
+                  at 600 epochs after only 265 epochs, and pushes pure pixel-space generation closer to
+                  or beyond heavyweight latent-space diffusion models.
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </header>
+
+    <main>
+      <section class="section section-visual">
+        <div class="shell">
+          <figure class="pdf-figure pdf-figure-hero">
+            <div class="pdf-frame">
+              <img class="figure-image" src="assets/images/motivation.png" alt="WiT motivation figure">
+            </div>
+            <figcaption>
+              An overview of our Waypoint Diffusion Transformers. (a) and (b) demonstrate the
+              difference in trajectories before and after the waypoint is introduced. In standard
+              pixel-space FM (a), mapping directly to an entangled, non-discriminative pixel
+              manifold (d) induces severe trajectory conflict. With the integration of
+              discriminative semantic waypoints (c), our WiT converts the noise-to-pixel task into
+              two stable, decoupled mappings. By routing the transport path, the generative flow is
+              disentangled, thus mitigating path overlap. Consequently, WiT significantly
+              accelerates convergence compared to baseline (e) while yielding highly realistic
+              generated samples (f).
+            </figcaption>
+          </figure>
+        </div>
+      </section>
+
+      <section class="section section-alt" id="method">
+        <div class="shell">
+          <div class="section-head">
+            <p class="eyebrow">Method</p>
+            <h2>A decoupled semantic-to-pixel generation pipeline</h2>
+          </div>
+
+          <div class="step-grid">
+            <article class="step-card">
+              <span class="step-index">01</span>
+              <h3>Construct semantic waypoints</h3>
+              <p>
+                Dense DINOv3 features are projected with PCA to a compact 64D semantic manifold.
+                These waypoints preserve discriminative structure without inheriting the full
+                regression burden of high-dimensional foundation-model features.
+              </p>
+            </article>
+            <article class="step-card">
+              <span class="step-index">02</span>
+              <h3>Predict waypoints from noisy pixels</h3>
+              <p>
+                A 21M-parameter waypoint generator infers clean semantic anchors directly from the
+                current pixel-space noisy state, making semantic navigation dynamic throughout ODE
+                integration rather than a one-shot side condition.
+              </p>
+            </article>
+            <article class="step-card">
+              <span class="step-index">03</span>
+              <h3>Inject semantics with Just-Pixel AdaLN</h3>
+              <p>
+                Instead of concatenating extra tokens or channels, WiT injects semantic guidance as
+                spatially varying affine modulation inside the diffusion transformer, preserving the
+                native pixel attention manifold while enforcing local structure.
+              </p>
+            </article>
+          </div>
+
+          <div class="visual-grid">
+            <figure class="pdf-figure">
+              <div class="pdf-frame">
+                <img class="figure-image" src="assets/images/arch.png" alt="WiT architecture overview">
+              </div>
+              <figcaption>
+                Overview of the WiT architecture. Left: A lightweight Waypoints Generator (21M
+                params) predicts Semantic Waypoints from the noisy state z_t. Right: The Pixel
+                Space Generator synthesizes the image, utilizing these predicted waypoints as
+                spatial conditions via the Just-Pixel AdaLN mechanism.
+              </figcaption>
+            </figure>
+
+            <figure class="pdf-figure">
+              <div class="pdf-frame">
+                <img class="figure-image" src="assets/images/adaln.png" alt="Just-Pixel AdaLN figure">
+              </div>
+              <figcaption>
+                (a) Just-Pixel AdaLN: The predicted semantic waypoints provide spatially varying
+                modulation. (b) Visualization of the predicted semantic waypoints and intermediate
+                pixel states during inference. Left: The evolving noisy pixel states z_t at
+                different integration timesteps. Right: The corresponding spatial semantic
+                waypoints s_hat_0 dynamically inferred by our lightweight Waypoints Generator.
+              </figcaption>
+            </figure>
+          </div>
+
+          <div class="algorithm-grid">
+            <figure class="algorithm-figure">
+              <div class="pdf-frame">
+                <img class="figure-image" src="assets/images/algorithm_training.png" alt="Algorithm 1 training procedure of WiT">
+              </div>
+            </figure>
+
+            <figure class="algorithm-figure">
+              <div class="pdf-frame">
+                <img class="figure-image" src="assets/images/algorithm_inference.png" alt="Algorithm 2 inference procedure of WiT">
+              </div>
+            </figure>
+          </div>
+        </div>
+      </section>
+
+      <section class="section" id="results">
+        <div class="shell">
+          <div class="section-head">
+            <p class="eyebrow">Results</p>
+            <h2>Faster convergence, stronger realism, more stable trajectories</h2>
+          </div>
+
+          <div class="highlight-grid">
+            <article class="highlight-card">
+              <h3>Matched JiT-L/16 early</h3>
+              <p>
+                WiT-L/16 reaches <strong>FID 2.36</strong> after <strong>265 epochs</strong>, matching
+                JiT-L/16 at <strong>600 epochs</strong>.
+              </p>
+            </article>
+            <article class="highlight-card">
+              <h3>Stronger final scale-up</h3>
+              <p>
+                WiT-XL/16 reaches <strong>FID 1.89</strong> and <strong>IS 301.0</strong> after 600
+                epochs on ImageNet 256x256.
+              </p>
+            </article>
+            <article class="highlight-card">
+              <h3>Conflict actually drops</h3>
+              <p>
+                Peak pairwise trajectory conflict improves by <strong>1.62x</strong>, supporting the
+                claim that semantic waypoints reduce path overlap rather than only masking it.
+              </p>
+            </article>
+          </div>
+
+          <div class="table-card">
+            <h3>Comprehensive quantitative comparison</h3>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Method</th>
+                    <th>Params</th>
+                    <th>Epochs</th>
+                    <th>IS</th>
+                    <th>FID-50K</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr class="table-group">
+                    <td colspan="5">Latent-space Diffusion Models</td>
+                  </tr>
+                  <tr>
+                    <td>DiT-XL/2</td>
+                    <td>675M + 49M</td>
+                    <td>-</td>
+                    <td>278.2</td>
+                    <td>2.27</td>
+                  </tr>
+                  <tr>
+                    <td>SiT-XL/2</td>
+                    <td>675M + 49M</td>
+                    <td>-</td>
+                    <td>277.5</td>
+                    <td>2.06</td>
+                  </tr>
+                  <tr>
+                    <td>REPA (SiT-XL/2)</td>
+                    <td>675M + 49M</td>
+                    <td>-</td>
+                    <td>305.7</td>
+                    <td>1.42</td>
+                  </tr>
+                  <tr>
+                    <td>LightningDiT-XL/2</td>
+                    <td>675M + 49M</td>
+                    <td>-</td>
+                    <td>295.3</td>
+                    <td>1.35</td>
+                  </tr>
+                  <tr>
+                    <td>DDT-XL/2</td>
+                    <td>675M + 49M</td>
+                    <td>-</td>
+                    <td>310.6</td>
+                    <td>1.26</td>
+                  </tr>
+                  <tr>
+                    <td>RAE (DiT^DH-XL/2)</td>
+                    <td>839M + 415M</td>
+                    <td>-</td>
+                    <td>262.6</td>
+                    <td><strong>1.13</strong></td>
+                  </tr>
+
+                  <tr class="table-group">
+                    <td colspan="5">Pixel-space Models (Non-diffusion)</td>
+                  </tr>
+                  <tr>
+                    <td>JetFormer</td>
+                    <td>2.8B</td>
+                    <td>-</td>
+                    <td>-</td>
+                    <td>6.64</td>
+                  </tr>
+                  <tr>
+                    <td>FractalMAR-H</td>
+                    <td>848M</td>
+                    <td>-</td>
+                    <td>348.9</td>
+                    <td>6.15</td>
+                  </tr>
+
+                  <tr class="table-group">
+                    <td colspan="5">Pixel-space Diffusion Models</td>
+                  </tr>
+                  <tr>
+                    <td>ADM-G</td>
+                    <td>554M</td>
+                    <td>-</td>
+                    <td>186.7</td>
+                    <td>4.59</td>
+                  </tr>
+                  <tr>
+                    <td>RIN</td>
+                    <td>410M</td>
+                    <td>-</td>
+                    <td>182.0</td>
+                    <td>3.42</td>
+                  </tr>
+                  <tr>
+                    <td>SiD (UViT/2)</td>
+                    <td>2B</td>
+                    <td>-</td>
+                    <td>256.3</td>
+                    <td>2.44</td>
+                  </tr>
+                  <tr>
+                    <td>PixelFlow (XL/4)</td>
+                    <td>677M</td>
+                    <td>-</td>
+                    <td>282.1</td>
+                    <td>1.98</td>
+                  </tr>
+                  <tr>
+                    <td>PixNerd (XL/16)</td>
+                    <td>700M</td>
+                    <td>-</td>
+                    <td>297.0</td>
+                    <td>2.15</td>
+                  </tr>
+                  <tr>
+                    <td>JiT-H/16</td>
+                    <td>953M</td>
+                    <td>-</td>
+                    <td>303.4</td>
+                    <td>1.86</td>
+                  </tr>
+                  <tr>
+                    <td>JiT-G/16</td>
+                    <td>2B</td>
+                    <td>-</td>
+                    <td>292.6</td>
+                    <td><strong>1.82</strong></td>
+                  </tr>
+                  <tr>
+                    <td>LF-DIT-L/16</td>
+                    <td>465M</td>
+                    <td>200</td>
+                    <td>-</td>
+                    <td>2.48</td>
+                  </tr>
+
+                  <tr class="table-group">
+                    <td colspan="5">Direct Baselines &amp; Ours</td>
+                  </tr>
+                  <tr>
+                    <td>JiT-B/16</td>
+                    <td>131M</td>
+                    <td>200</td>
+                    <td>-</td>
+                    <td>4.37</td>
+                  </tr>
+                  <tr class="row-accent">
+                    <td><strong>WiT-B/16 (Ours)</strong></td>
+                    <td>131M + 21M</td>
+                    <td>200</td>
+                    <td><strong>270.7</strong></td>
+                    <td><strong>3.34</strong></td>
+                  </tr>
+                  <tr class="table-divider">
+                    <td>JiT-B/16</td>
+                    <td>131M</td>
+                    <td>600</td>
+                    <td>275.1</td>
+                    <td>3.66</td>
+                  </tr>
+                  <tr class="row-accent">
+                    <td><strong>WiT-B/16 (Ours)</strong></td>
+                    <td>131M + 21M</td>
+                    <td>600</td>
+                    <td><strong>280.2</strong></td>
+                    <td><strong>3.03</strong></td>
+                  </tr>
+                  <tr class="table-divider">
+                    <td>JiT-L/16</td>
+                    <td>459M</td>
+                    <td>200</td>
+                    <td>-</td>
+                    <td>2.79</td>
+                  </tr>
+                  <tr class="row-accent">
+                    <td><strong>WiT-L/16 (Ours)</strong></td>
+                    <td>459M + 21M</td>
+                    <td>200</td>
+                    <td><strong>289.1</strong></td>
+                    <td><strong>2.38</strong></td>
+                  </tr>
+                  <tr>
+                    <td>JiT-L/16</td>
+                    <td>459M</td>
+                    <td>600</td>
+                    <td>298.5</td>
+                    <td>2.36</td>
+                  </tr>
+                  <tr>
+                    <td><strong>WiT-L/16 (Ours)</strong></td>
+                    <td>459M + 21M</td>
+                    <td>265</td>
+                    <td>293.7</td>
+                    <td>2.36</td>
+                  </tr>
+                  <tr class="row-accent">
+                    <td><strong>WiT-L/16 (Ours)</strong></td>
+                    <td>459M + 21M</td>
+                    <td>600</td>
+                    <td><strong>303.3</strong></td>
+                    <td><strong>2.22</strong></td>
+                  </tr>
+                  <tr class="table-divider row-accent">
+                    <td><strong>WiT-XL/16 (Ours)</strong></td>
+                    <td>676M + 21M</td>
+                    <td>200</td>
+                    <td>288.9</td>
+                    <td>2.16</td>
+                  </tr>
+                  <tr class="row-accent">
+                    <td><strong>WiT-XL/16 (Ours)</strong></td>
+                    <td>676M + 21M</td>
+                    <td>600</td>
+                    <td><strong>301.0</strong></td>
+                    <td><strong>1.89</strong></td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+            <p class="table-note">
+              Full main-table results from the paper, covering latent-space diffusion, pixel-space
+              non-diffusion, pixel-space diffusion, and direct JiT/WiT comparisons on ImageNet
+              256x256.
+            </p>
+          </div>
+
+          <div class="analysis-grid">
+            <article class="analysis-card">
+              <h3>Trajectory conflict metrics</h3>
+              <ul class="stat-list">
+                <li><strong>1.55x</strong> more stable midpoint pairwise conflict</li>
+                <li><strong>1.62x</strong> more stable maximum peak conflict</li>
+                <li><strong>1.13x</strong> more stable midpoint CFG relative L2 distance</li>
+              </ul>
+            </article>
+            <article class="analysis-card">
+              <h3>Ablation summary</h3>
+              <ul class="stat-list">
+                <li><strong>PCA d=64</strong> is the best semantic bottleneck</li>
+                <li><strong>Just-Pixel AdaLN</strong> outperforms channel concat and in-context concat</li>
+                <li><strong>WiT-B/16</strong> reaches IS 270.73 and FID 3.34 at 200 epochs</li>
+              </ul>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <section class="section section-alt" id="gallery">
+        <div class="shell">
+          <div class="section-head">
+            <p class="eyebrow">Qualitative Samples</p>
+            <h2>Pixel-space detail with semantic structure preserved</h2>
+          </div>
+
+          <figure class="pdf-figure">
+            <div class="pdf-frame">
+              <img class="figure-image" src="assets/images/main_visual.jpg" alt="Main qualitative results">
+            </div>
+            <figcaption>
+              WiT-L/16 samples show strong structure, clean boundaries, and high-frequency detail
+              without relying on latent autoencoders.
+            </figcaption>
+          </figure>
+
+          <div class="gallery-grid">
+            <figure class="pdf-figure gallery-item">
+              <div class="pdf-frame">
+                <img class="figure-image" src="assets/images/more_visual1.jpg" alt="Additional WiT samples 1">
+              </div>
+            </figure>
+            <figure class="pdf-figure gallery-item">
+              <div class="pdf-frame">
+                <img class="figure-image" src="assets/images/more_visual2.jpg" alt="Additional WiT samples 2">
+              </div>
+            </figure>
+            <figure class="pdf-figure gallery-item">
+              <div class="pdf-frame">
+                <img class="figure-image" src="assets/images/more_visual3.jpg" alt="Additional WiT samples 3">
+              </div>
+            </figure>
+            <figure class="pdf-figure gallery-item">
+              <div class="pdf-frame">
+                <img class="figure-image" src="assets/images/more_visual4.jpg" alt="Additional WiT samples 4">
+              </div>
+            </figure>
+          </div>
+        </div>
+      </section>
+
+      <section class="section" id="code-status">
+        <div class="shell">
+          <div class="section-head">
+            <p class="eyebrow">Repository Status</p>
+            <h2>The code repository is live and will be populated here</h2>
+          </div>
+          <div class="content-card content-card-split">
+            <div>
+              <p>
+                This repository is the official landing point for WiT. The current public state is
+                the project page plus a placeholder code entry. Training and inference code will be
+                released in this same repository after the paper is formally published.
+              </p>
+            </div>
+            <div class="status-box">
+              <span class="status-label">Repository</span>
+              <a href="https://github.com/hainuo-wang/WiT" target="_blank" rel="noreferrer">
+                github.com/hainuo-wang/WiT
+              </a>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="section" id="acknowledgments">
+        <div class="shell">
+          <div class="section-head">
+            <p class="eyebrow">Acknowledgments</p>
+            <h2>Support and thanks</h2>
+          </div>
+          <div class="content-card">
+            <p>
+              We thank <a href="https://github.com/mingcv" target="_blank" rel="noreferrer">Qiming Hu</a>
+              for insightful discussions and feedback. This work was partially supported by
+              computational resources from TPU Research Cloud (TRC).
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <section class="section section-alt" id="citation">
+        <div class="shell">
+          <div class="section-head">
+            <p class="eyebrow">Citation</p>
+            <h2>BibTeX</h2>
+          </div>
+
+          <div class="citation-card">
+            <button class="copy-button" id="copy-bibtex" type="button">Copy BibTeX</button>
+            <pre><code id="bibtex-block"></code></pre>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <div class="shell footer-grid">
+        <p>
+          WiT project page. Built as a lightweight academic site for GitHub Pages.
+        </p>
+        <p>
+          The page is configured for GitHub Pages deployment from the <code>docs/</code> directory.
+        </p>
+      </div>
+    </footer>
+
+    <script src="assets/js/site.js"></script>
+  </body>
+</html>
